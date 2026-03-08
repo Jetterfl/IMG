@@ -26,8 +26,8 @@ class FeatureItem:
 
 SYSTEM_FEATURES = [
     FeatureItem(
-        title="Отключить все уведомления Windows",
-        description="Toast-уведомления отключаются через HKCU. Состояние читается при запуске.",
+        title="Disable Windows notifications",
+        description="Global toast notifications",
         key="windows_notifications",
         registry_targets=(
             RegistryValueTarget(
@@ -45,8 +45,8 @@ SYSTEM_FEATURES = [
         ),
     ),
     FeatureItem(
-        title="Отключить уведомления на lock screen",
-        description="Блокирует показ toast-уведомлений на экране блокировки.",
+        title="Disable lock screen toasts",
+        description="No toasts above lock screen",
         key="lockscreen_notifications",
         registry_targets=(
             RegistryValueTarget(
@@ -58,8 +58,8 @@ SYSTEM_FEATURES = [
         ),
     ),
     FeatureItem(
-        title="Отключить рекламный ID",
-        description="Отключает персональный advertising ID для приложений.",
+        title="Disable advertising ID",
+        description="Privacy hardening",
         key="advertising_id",
         registry_targets=(
             RegistryValueTarget(
@@ -71,8 +71,8 @@ SYSTEM_FEATURES = [
         ),
     ),
     FeatureItem(
-        title="Отключить советы Windows",
-        description="Выключает рекомендации и советы в интерфейсе Windows.",
+        title="Disable Windows tips",
+        description="Disable suggestion content",
         key="windows_tips",
         registry_targets=(
             RegistryValueTarget(
@@ -90,8 +90,8 @@ SYSTEM_FEATURES = [
         ),
     ),
     FeatureItem(
-        title="Отключить рекомендации в меню Пуск",
-        description="Блокирует suggestion-контент и app recommendations.",
+        title="Disable Start suggestions",
+        description="Disable Start recommendation entries",
         key="start_suggestions",
         registry_targets=(
             RegistryValueTarget(
@@ -103,8 +103,8 @@ SYSTEM_FEATURES = [
         ),
     ),
     FeatureItem(
-        title="Отключить activity history",
-        description="Отключает публикацию и загрузку активности пользователя.",
+        title="Disable activity history",
+        description="Disable publishing/uploading user activities",
         key="activity_history",
         registry_targets=(
             RegistryValueTarget(
@@ -123,21 +123,11 @@ SYSTEM_FEATURES = [
     ),
 ]
 
-SECTIONS = [
-    {
-        "title": "System Tweaks",
-        "description": "Neverlose-style переключатели реальных системных параметров через реестр.",
-        "items": SYSTEM_FEATURES,
-    },
-    {
-        "title": "Workspace",
-        "description": "Локальные переключатели прототипа для рабочих сценариев.",
-        "items": [
-            FeatureItem("Рабочий режим", "Минимум отвлечений в интерфейсе приложения.", "work_mode"),
-            FeatureItem("Учебный режим", "Упор на фокус и простую навигацию.", "study_mode"),
-            FeatureItem("Игровой режим", "Ускоренный визуальный пресет приложения.", "game_mode"),
-        ],
-    },
+LOCAL_FEATURES = [
+    FeatureItem("Auto Save", "Local prototype behavior", "auto_save"),
+    FeatureItem("Compact Mode", "Reduce spacing and labels", "compact_mode"),
+    FeatureItem("Fast Animations", "Speed up UI transitions", "fast_animations"),
+    FeatureItem("Focus Accent", "Use strong selection highlight", "focus_accent"),
 ]
 
 
@@ -166,11 +156,8 @@ class RegistryManager:
 
     @classmethod
     def is_feature_enabled(cls, feature: FeatureItem) -> bool:
-        if not feature.registry_targets:
+        if not feature.registry_targets or not cls.is_supported():
             return False
-        if not cls.is_supported():
-            return False
-
         for target in feature.registry_targets:
             current = cls._read_dword(target.path, target.name)
             if current is None or current != target.enabled_value:
@@ -181,136 +168,202 @@ class RegistryManager:
     def set_feature_enabled(cls, feature: FeatureItem, enabled: bool) -> bool:
         if not cls.is_supported():
             return False
-
         for target in feature.registry_targets:
             desired = target.enabled_value if enabled else target.disabled_value
             if not cls._write_dword(target.path, target.name, desired):
                 return False
-
         return cls.is_feature_enabled(feature) == enabled
 
 
-class AnimatedToggle(tk.Canvas):
+class DotToggle(tk.Canvas):
     def __init__(self, master, initial: bool, command, **kwargs):
-        super().__init__(master, width=58, height=30, highlightthickness=0, bd=0, **kwargs)
-        self.state = initial
+        super().__init__(master, width=48, height=22, highlightthickness=0, bd=0, **kwargs)
         self.command = command
-        self.knob_x = 30 if initial else 2
-        self.target_x = self.knob_x
+        self.state = initial
+        self.dot_x = 27 if initial else 3
+        self.target_x = self.dot_x
         self.animating = False
-        self.bind("<Button-1>", self._on_click)
         self.configure(cursor="hand2")
+        self.bind("<Button-1>", self._on_click)
         self._draw()
 
     def _draw(self):
         self.delete("all")
-        track = "#9a6bff" if self.state else "#35395b"
-        border = "#bb97ff" if self.state else "#4b4f75"
-        self.create_oval(2, 2, 28, 28, fill=track, outline=border, width=1)
-        self.create_oval(30, 2, 56, 28, fill=track, outline=border, width=1)
-        self.create_rectangle(15, 2, 43, 28, fill=track, outline=track)
-        self.create_oval(self.knob_x, 3, self.knob_x + 24, 27, fill="#ffffff", outline="#d9daf5")
+        track = "#224c73" if self.state else "#22273f"
+        border = "#2f9af0" if self.state else "#3b4060"
+        self.create_oval(1, 1, 21, 21, fill=track, outline=border)
+        self.create_oval(27, 1, 47, 21, fill=track, outline=border)
+        self.create_rectangle(11, 1, 37, 21, fill=track, outline=track)
+        self.create_oval(self.dot_x, 2, self.dot_x + 18, 20, fill="#05b7ff" if self.state else "#8a91b5", outline="")
 
     def _on_click(self, _event):
         if self.animating:
             return
-
         desired = not self.state
-        result = self.command(desired)
-        if result is False:
+        if self.command(desired) is False:
             return
-
         self.state = desired
-        self.target_x = 30 if self.state else 2
+        self.target_x = 27 if desired else 3
         self.animating = True
         self._animate()
 
     def _animate(self):
-        if abs(self.knob_x - self.target_x) <= 1:
-            self.knob_x = self.target_x
+        if abs(self.dot_x - self.target_x) <= 1:
+            self.dot_x = self.target_x
             self.animating = False
             self._draw()
             return
-
-        self.knob_x += 3 if self.knob_x < self.target_x else -3
+        self.dot_x += 3 if self.dot_x < self.target_x else -3
         self._draw()
-        self.after(10, self._animate)
-
-    def sync_state(self, value: bool):
-        self.state = value
-        self.knob_x = 30 if value else 2
-        self.target_x = self.knob_x
-        self.animating = False
-        self._draw()
+        self.after(11, self._animate)
 
 
-class ControlCenterApp:
+class NeverloseApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Neverlose Control Center")
-        self.root.geometry("1080x640")
-        self.root.minsize(940, 560)
-        self.root.configure(bg="#0a0b12")
+        self.root.title("Neverlose Control Panel")
+        self.root.geometry("1220x700")
+        self.root.minsize(1100, 620)
+        self.root.configure(bg="#7f9aaa")
 
-        self.local_states: dict[str, bool] = {
-            "work_mode": True,
-            "study_mode": False,
-            "game_mode": False,
+        self.local_states = {
+            "auto_save": True,
+            "compact_mode": False,
+            "fast_animations": True,
+            "focus_accent": True,
         }
 
-        self.menu_buttons: list[tk.Button] = []
-        self.card_container: tk.Frame | None = None
         self.status_label: tk.Label | None = None
+        self.main_left: tk.Frame | None = None
+        self.main_right: tk.Frame | None = None
 
-        self._build_ui()
-        self.render_section(0)
+        self._build_shell()
+        self._build_panels()
 
-    def _build_ui(self):
-        shell = tk.Frame(self.root, bg="#0a0b12")
-        shell.pack(fill="both", expand=True)
+    def _build_shell(self):
+        shell = tk.Frame(self.root, bg="#0a0d12", highlightthickness=1, highlightbackground="#2b2f44")
+        shell.pack(fill="both", expand=True, padx=18, pady=18)
 
-        sidebar = tk.Frame(shell, bg="#111322", width=260, highlightthickness=1, highlightbackground="#282d49")
+        sidebar = tk.Frame(shell, bg="#111821", width=220)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
-        logo = tk.Frame(sidebar, bg="#111322")
-        logo.pack(fill="x", padx=16, pady=(16, 14))
-        tk.Label(logo, text="NEVERLOSE", bg="#111322", fg="#c59bff", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        tk.Label(logo, text="control center", bg="#111322", fg="#8f95b8", font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Label(sidebar, text="NEVERLOSE", bg="#111821", fg="#f1f4ff", font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=16, pady=(18, 2))
 
-        for idx, section in enumerate(SECTIONS):
-            btn = tk.Button(
-                sidebar,
-                text=section["title"],
-                bg="#1a1f36",
-                fg="#e8e9ff",
-                activebackground="#7d4cff",
-                activeforeground="#ffffff",
-                bd=0,
-                relief="flat",
+        self._menu_group(sidebar, "Aimbot", ["Ragebot", "Anti Aim", "Legitbot"], active="Anti Aim")
+        self._menu_group(sidebar, "Visuals", ["Players", "Weapon", "Grenades", "World", "View"])
+        self._menu_group(sidebar, "Miscellaneous", ["Main", "Inventory", "Scripts", "Configs"])
+
+        center = tk.Frame(shell, bg="#070b10")
+        center.pack(side="left", fill="both", expand=True)
+
+        topbar = tk.Frame(center, bg="#0d1118", height=54, highlightthickness=1, highlightbackground="#1f2735")
+        topbar.pack(fill="x")
+        topbar.pack_propagate(False)
+
+        tk.Button(
+            topbar,
+            text="💾  Save",
+            bg="#0f1621",
+            fg="#d5e4ff",
+            activebackground="#102338",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        ).pack(side="left", padx=14, pady=10)
+
+        tk.Label(topbar, text="⚙  🔍", bg="#0d1118", fg="#8994b9", font=("Segoe UI", 12)).pack(side="right", padx=14)
+
+        content = tk.Frame(center, bg="#070b10")
+        content.pack(fill="both", expand=True, padx=12, pady=12)
+
+        self.main_left = tk.Frame(content, bg="#0f141d", highlightthickness=1, highlightbackground="#252c3d")
+        self.main_left.pack(side="left", fill="both", expand=True)
+
+        self.main_right = tk.Frame(content, bg="#0f141d", width=300, highlightthickness=1, highlightbackground="#252c3d")
+        self.main_right.pack(side="left", fill="y", padx=(10, 0))
+        self.main_right.pack_propagate(False)
+
+    def _menu_group(self, parent, title: str, items: list[str], active: str | None = None):
+        tk.Label(parent, text=title, bg="#111821", fg="#7f89ad", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(16, 6))
+        for item in items:
+            is_active = item == active
+            tk.Button(
+                parent,
+                text=f"   {item}",
                 anchor="w",
-                padx=14,
-                pady=10,
-                font=("Segoe UI", 11, "bold"),
+                bg="#2b3242" if is_active else "#111821",
+                fg="#f2f6ff" if is_active else "#9ca7cb",
+                activebackground="#2d4f74",
+                activeforeground="#ffffff",
+                relief="flat",
+                bd=0,
+                padx=8,
+                pady=8,
+                font=("Segoe UI", 10, "bold" if is_active else "normal"),
                 cursor="hand2",
-                command=lambda i=idx: self.render_section(i),
+            ).pack(fill="x", padx=12, pady=2)
+
+    def _build_panels(self):
+        if self.main_left is None or self.main_right is None:
+            return
+
+        head = tk.Frame(self.main_left, bg="#0f141d")
+        head.pack(fill="x", padx=14, pady=(12, 8))
+        tk.Label(head, text="System Tweaks", bg="#0f141d", fg="#e9f1ff", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+
+        grids = tk.Frame(self.main_left, bg="#0f141d")
+        grids.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        left_panel = tk.Frame(grids, bg="#0b1017", highlightthickness=1, highlightbackground="#20283a")
+        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 6))
+        right_panel = tk.Frame(grids, bg="#0b1017", highlightthickness=1, highlightbackground="#20283a")
+        right_panel.pack(side="left", fill="both", expand=True, padx=(6, 0))
+
+        self._feature_list(left_panel, "Movement", SYSTEM_FEATURES[:3])
+        self._feature_list(right_panel, "Other", SYSTEM_FEATURES[3:])
+
+        tk.Label(self.main_right, text="About Neverlose", bg="#0f141d", fg="#66b6ff", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(12, 2))
+        tk.Label(self.main_right, text="NEVERLOSE.CC", bg="#0f141d", fg="#f7f8ff", font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=12)
+
+        sep = tk.Frame(self.main_right, bg="#1d2334", height=1)
+        sep.pack(fill="x", padx=12, pady=12)
+
+        self._feature_list(self.main_right, "Workspace", LOCAL_FEATURES, compact=True)
+
+        self.status_label = tk.Label(self.main_right, text="", bg="#0f141d", fg="#67c3ff", font=("Segoe UI", 9, "bold"))
+        self.status_label.pack(anchor="w", padx=12, pady=(8, 0))
+
+    def _feature_list(self, parent: tk.Frame, title: str, features: list[FeatureItem], compact: bool = False):
+        tk.Label(parent, text=title, bg=parent["bg"], fg="#a8b2d4", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(10, 6))
+
+        for feature in features:
+            row = tk.Frame(parent, bg=parent["bg"])
+            row.pack(fill="x", padx=10, pady=3)
+
+            text = tk.Frame(row, bg=parent["bg"])
+            text.pack(side="left", fill="x", expand=True)
+
+            tk.Label(text, text=feature.title, bg=parent["bg"], fg="#dce5ff", font=("Segoe UI", 10)).pack(anchor="w")
+            if not compact:
+                tk.Label(text, text=feature.description, bg=parent["bg"], fg="#6f7da3", font=("Segoe UI", 8)).pack(anchor="w")
+
+            toggle = DotToggle(
+                row,
+                initial=self._initial_state(feature),
+                bg=parent["bg"],
+                command=lambda desired, f=feature: self._toggle_feature(f, desired),
             )
-            btn.pack(fill="x", padx=14, pady=5)
-            self.menu_buttons.append(btn)
+            toggle.pack(side="right", pady=1)
 
-        content = tk.Frame(shell, bg="#0a0b12")
-        content.pack(side="left", fill="both", expand=True, padx=18, pady=16)
-
-        self.section_title = tk.Label(content, bg="#0a0b12", fg="#f0edff", font=("Segoe UI", 22, "bold"))
-        self.section_title.pack(anchor="w")
-        self.section_desc = tk.Label(content, bg="#0a0b12", fg="#9298bf", font=("Segoe UI", 10))
-        self.section_desc.pack(anchor="w", pady=(3, 8))
-
-        self.status_label = tk.Label(content, bg="#0a0b12", fg="#b694ff", font=("Segoe UI", 10, "bold"), text="")
-        self.status_label.pack(anchor="w", pady=(0, 8))
-
-        self.card_container = tk.Frame(content, bg="#0a0b12")
-        self.card_container.pack(fill="both", expand=True)
+    def _initial_state(self, feature: FeatureItem) -> bool:
+        if feature.registry_targets:
+            return RegistryManager.is_feature_enabled(feature)
+        return self.local_states.get(feature.key, False)
 
     def _set_status(self, message: str):
         if self.status_label is None:
@@ -318,93 +371,27 @@ class ControlCenterApp:
         self.status_label.config(text=message)
         self.root.after(2200, lambda: self.status_label and self.status_label.config(text=""))
 
-    def _clear_cards(self):
-        if self.card_container:
-            for child in self.card_container.winfo_children():
-                child.destroy()
-
-    def _initial_state(self, feature: FeatureItem) -> bool:
-        if feature.registry_targets:
-            enabled = RegistryManager.is_feature_enabled(feature)
-            return enabled
-        return self.local_states.get(feature.key, False)
-
     def _toggle_feature(self, feature: FeatureItem, desired: bool) -> bool:
         if feature.registry_targets:
             if not RegistryManager.is_supported():
-                self._set_status("Реестровые функции доступны только на Windows.")
+                self._set_status("Registry features are available only on Windows")
                 return False
 
-            ok = RegistryManager.set_feature_enabled(feature, desired)
-            if not ok:
-                self._set_status(f"Не удалось применить: {feature.title}")
+            if not RegistryManager.set_feature_enabled(feature, desired):
+                self._set_status(f"Failed: {feature.title}")
                 return False
 
-            state_text = "ON" if desired else "OFF"
-            self._set_status(f"{feature.title}: {state_text}")
+            self._set_status(f"{feature.title}: {'ON' if desired else 'OFF'}")
             return True
 
         self.local_states[feature.key] = desired
         self._set_status(f"{feature.title}: {'ON' if desired else 'OFF'}")
         return True
 
-    def render_section(self, section_index: int):
-        section = SECTIONS[section_index]
-        self.section_title.config(text=section["title"])
-        self.section_desc.config(text=section["description"])
-
-        for idx, button in enumerate(self.menu_buttons):
-            if idx == section_index:
-                button.config(bg="#7d4cff", fg="#ffffff")
-            else:
-                button.config(bg="#1a1f36", fg="#e8e9ff")
-
-        self._clear_cards()
-        if self.card_container is None:
-            return
-
-        for i, feature in enumerate(section["items"]):
-            card = tk.Frame(
-                self.card_container,
-                bg="#151a2d",
-                highlightthickness=1,
-                highlightbackground="#2c3253",
-                width=330,
-                height=106,
-            )
-            card.grid(row=i // 2, column=i % 2, padx=6, pady=6, sticky="n")
-            card.grid_propagate(False)
-
-            self.card_container.grid_columnconfigure(0, weight=1)
-            self.card_container.grid_columnconfigure(1, weight=1)
-
-            head = tk.Frame(card, bg="#151a2d")
-            head.pack(fill="x", padx=10, pady=(8, 0))
-
-            tk.Label(head, text=feature.title, bg="#151a2d", fg="#f4f2ff", font=("Segoe UI", 10, "bold")).pack(side="left", anchor="w")
-
-            toggle = AnimatedToggle(
-                head,
-                initial=self._initial_state(feature),
-                bg="#151a2d",
-                command=lambda desired, f=feature: self._toggle_feature(f, desired),
-            )
-            toggle.pack(side="right")
-
-            tk.Label(
-                card,
-                text=feature.description,
-                bg="#151a2d",
-                fg="#9da3c7",
-                font=("Segoe UI", 9),
-                justify="left",
-                wraplength=300,
-            ).pack(anchor="w", padx=10, pady=(4, 0))
-
 
 def main():
     root = tk.Tk()
-    ControlCenterApp(root)
+    NeverloseApp(root)
     root.mainloop()
 
 
