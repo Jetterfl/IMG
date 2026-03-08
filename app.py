@@ -1,209 +1,324 @@
+import platform
 import tkinter as tk
-from tkinter import ttk
+from dataclasses import dataclass
+from typing import Callable
+
+try:
+    import winreg  # type: ignore
+except ImportError:  # non-Windows environment
+    winreg = None
+
+
+@dataclass
+class FeatureItem:
+    title: str
+    description: str
+    key: str
+
 
 SECTIONS = [
     {
         "title": "Профили",
-        "description": "Готовые режимы работы и отдыха.",
+        "description": "Быстрое включение и отключение рабочих функций.",
         "items": [
-            ("Рабочий режим", "Отключает отвлекающие уведомления и мессенджеры."),
-            ("Учебный режим", "Ограничивает фоновые приложения и сайты."),
-            ("Игровой режим", "Переводит систему в производительный профиль."),
+            FeatureItem("Рабочий режим", "Отключает отвлекающие всплывающие сценарии в приложении.", "work_mode"),
+            FeatureItem("Учебный режим", "Фокус на задачах без отвлекающих элементов.", "study_mode"),
+            FeatureItem("Игровой режим", "Приоритет интерфейса для игрового сценария.", "game_mode"),
         ],
     },
     {
         "title": "Система",
-        "description": "Быстрые системные параметры в одном окне.",
+        "description": "Системные функции с переключателями ON/OFF.",
         "items": [
-            ("Энергосбережение", "Снижает потребление батареи и фоновые задачи."),
-            ("Автоочистка", "Удаляет временные файлы каждый день."),
-            ("Автозагрузка", "Управление запуском приложений при старте Windows."),
+            FeatureItem(
+                "Отключить все уведомления Windows",
+                "Выключает уведомления через реестр. Если уже выключены, переключатель активен при запуске.",
+                "windows_notifications",
+            ),
+            FeatureItem("Автозапуск профиля", "Автоматически применять выбранный профиль при старте.", "autostart_profile"),
+            FeatureItem("Тихий режим UI", "Минимум лишних визуальных событий в интерфейсе.", "silent_ui"),
         ],
     },
     {
         "title": "Приватность",
-        "description": "Управление доступом и безопасностью.",
+        "description": "Конфиденциальность в формате простых переключателей.",
         "items": [
-            ("Камера", "Разрешение приложениям использовать камеру."),
-            ("Микрофон", "Глобальный доступ к микрофону."),
-            ("Telemetry", "Сбор диагностических данных Windows."),
-        ],
-    },
-    {
-        "title": "Внешний вид",
-        "description": "Настройка темы и читаемости интерфейса.",
-        "items": [
-            ("Тёмная тема", "Автоматическое переключение по времени суток."),
-            ("Крупный шрифт", "Увеличивает размер текста в приложениях."),
-            ("Анимации", "Управление эффектами интерфейса."),
+            FeatureItem("Доступ к камере", "Включить или отключить доступ приложений к камере.", "camera"),
+            FeatureItem("Доступ к микрофону", "Включить или отключить доступ приложений к микрофону.", "microphone"),
+            FeatureItem("Диагностика", "Разрешить или запретить диагностические события.", "telemetry"),
         ],
     },
 ]
 
 
+class WindowsNotificationManager:
+    TARGETS = [
+        (r"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled", 0),
+        (r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings", "NOC_GLOBAL_SETTING_TOASTS_ENABLED", 0),
+    ]
+
+    @classmethod
+    def is_supported(cls) -> bool:
+        return platform.system() == "Windows" and winreg is not None
+
+    @classmethod
+    def is_disabled(cls) -> bool:
+        if not cls.is_supported():
+            return False
+
+        for path, name, expected in cls.TARGETS:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ) as key:
+                    value, _ = winreg.QueryValueEx(key, name)
+                    if int(value) != expected:
+                        return False
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return False
+
+        return True
+
+    @classmethod
+    def set_disabled(cls, disabled: bool) -> bool:
+        if not cls.is_supported():
+            return False
+
+        target_value = 0 if disabled else 1
+        for path, name, _ in cls.TARGETS:
+            try:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+                    winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, target_value)
+            except OSError:
+                return False
+
+        return True
+
+
+class AnimatedToggle(tk.Canvas):
+    def __init__(self, master, initial: bool, command: Callable[[bool], bool | None], **kwargs):
+        super().__init__(master, width=62, height=32, highlightthickness=0, bd=0, **kwargs)
+        self.command = command
+        self.state = initial
+        self.knob_x = 33 if self.state else 3
+        self.target_x = self.knob_x
+        self.animating = False
+
+        self.bind("<Button-1>", self.on_click)
+        self.configure(cursor="hand2")
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        color = "#37d67a" if self.state else "#4a5375"
+        self.create_oval(2, 2, 30, 30, fill=color, outline=color)
+        self.create_oval(32, 2, 60, 30, fill=color, outline=color)
+        self.create_rectangle(16, 2, 46, 30, fill=color, outline=color)
+        self.create_oval(self.knob_x, 3, self.knob_x + 26, 29, fill="#ffffff", outline="#d9ddf3")
+
+    def on_click(self, _event):
+        if self.animating:
+            return
+
+        desired_state = not self.state
+        callback_result = self.command(desired_state)
+        if callback_result is False:
+            return
+
+        self.state = desired_state
+        self.target_x = 33 if self.state else 3
+        self.animating = True
+        self.animate()
+
+    def animate(self):
+        if abs(self.knob_x - self.target_x) <= 1:
+            self.knob_x = self.target_x
+            self.animating = False
+            self.draw()
+            return
+
+        direction = 1 if self.knob_x < self.target_x else -1
+        self.knob_x += direction * 3
+        self.draw()
+        self.after(12, self.animate)
+
+    def set_state(self, value: bool):
+        self.state = value
+        self.knob_x = 33 if self.state else 3
+        self.target_x = self.knob_x
+        self.animating = False
+        self.draw()
+
+
 class ControlCenterApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Control Center Prototype")
-        self.root.geometry("1080x680")
-        self.root.minsize(920, 560)
+        self.root.geometry("1120x700")
+        self.root.minsize(980, 620)
+        self.root.configure(bg="#0b1020")
 
-        self.current_section_index = 0
-        self.menu_buttons: list[ttk.Button] = []
-        self.card_container: ttk.Frame | None = None
+        self.feature_states: dict[str, bool] = {
+            "work_mode": True,
+            "study_mode": False,
+            "game_mode": False,
+            "autostart_profile": True,
+            "silent_ui": False,
+            "camera": True,
+            "microphone": True,
+            "telemetry": False,
+        }
+        self.menu_buttons: list[tk.Button] = []
+        self.card_container: tk.Frame | None = None
+        self.status_label: tk.Label | None = None
 
-        self._configure_styles()
         self._build_layout()
         self.render_section(0)
 
-    def _configure_styles(self) -> None:
-        style = ttk.Style(self.root)
-        style.theme_use("clam")
+    def _build_layout(self):
+        shell = tk.Frame(self.root, bg="#0b1020")
+        shell.pack(fill="both", expand=True)
 
-        bg_main = "#0b1020"
-        panel = "#141a31"
-        panel_alt = "#1c2442"
-        text = "#e7eaff"
-        muted = "#a9b3d6"
-
-        self.root.configure(bg=bg_main)
-
-        style.configure("Root.TFrame", background=bg_main)
-        style.configure("Panel.TFrame", background=panel)
-        style.configure("Card.TFrame", background=panel_alt)
-        style.configure("Title.TLabel", background=bg_main, foreground=text, font=("Segoe UI", 20, "bold"))
-        style.configure("Subtitle.TLabel", background=bg_main, foreground=muted, font=("Segoe UI", 11))
-        style.configure("SidebarTitle.TLabel", background=panel, foreground=text, font=("Segoe UI", 16, "bold"))
-        style.configure("SidebarSub.TLabel", background=panel, foreground=muted, font=("Segoe UI", 10))
-        style.configure("CardTitle.TLabel", background=panel_alt, foreground=text, font=("Segoe UI", 11, "bold"))
-        style.configure("CardDesc.TLabel", background=panel_alt, foreground=muted, font=("Segoe UI", 9), wraplength=250)
-
-        style.configure(
-            "Menu.TButton",
-            background=panel,
-            foreground=text,
-            padding=(10, 8),
-            borderwidth=1,
-            relief="flat",
-        )
-        style.map(
-            "Menu.TButton",
-            background=[("active", panel_alt)],
-            bordercolor=[("active", "#2f3964")],
-        )
-        style.configure(
-            "MenuActive.TButton",
-            background=panel_alt,
-            foreground=text,
-            padding=(10, 8),
-            borderwidth=1,
-            relief="flat",
-        )
-
-        style.configure(
-            "Primary.TButton",
-            background="#6c8cff",
-            foreground="#ffffff",
-            padding=(12, 8),
-            borderwidth=0,
-            relief="flat",
-        )
-        style.map("Primary.TButton", background=[("active", "#86a2ff")])
-
-        style.configure("Custom.Horizontal.TScale", background=panel_alt, troughcolor="#3c4a7b")
-
-    def _build_layout(self) -> None:
-        root_frame = ttk.Frame(self.root, style="Root.TFrame")
-        root_frame.pack(fill="both", expand=True)
-
-        sidebar = ttk.Frame(root_frame, style="Panel.TFrame", padding=16)
+        sidebar = tk.Frame(shell, bg="#131a31", width=280)
         sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        ttk.Label(sidebar, text="Control Center", style="SidebarTitle.TLabel").pack(anchor="w")
-        ttk.Label(sidebar, text="Прототип Windows-приложения", style="SidebarSub.TLabel").pack(anchor="w", pady=(2, 16))
+        tk.Label(sidebar, text="Control Center", bg="#131a31", fg="#e7eaff", font=("Segoe UI", 17, "bold")).pack(
+            anchor="w", padx=18, pady=(18, 2)
+        )
+        tk.Label(sidebar, text="Desktop prototype (.exe)", bg="#131a31", fg="#a9b3d6", font=("Segoe UI", 10)).pack(
+            anchor="w", padx=18, pady=(0, 16)
+        )
 
         for idx, section in enumerate(SECTIONS):
-            btn = ttk.Button(
+            btn = tk.Button(
                 sidebar,
                 text=section["title"],
-                style="Menu.TButton",
+                font=("Segoe UI", 11, "bold"),
+                fg="#e7eaff",
+                bg="#1b2444",
+                activebackground="#2a396d",
+                activeforeground="#ffffff",
+                bd=0,
+                relief="flat",
+                padx=14,
+                pady=11,
+                cursor="hand2",
                 command=lambda i=idx: self.render_section(i),
-                width=24,
             )
-            btn.pack(anchor="w", fill="x", pady=4)
+            btn.pack(fill="x", padx=14, pady=5)
             self.menu_buttons.append(btn)
 
-        content = ttk.Frame(root_frame, style="Root.TFrame", padding=20)
-        content.pack(side="left", fill="both", expand=True)
+        content = tk.Frame(shell, bg="#0b1020")
+        content.pack(side="left", fill="both", expand=True, padx=24, pady=20)
 
-        header = ttk.Frame(content, style="Root.TFrame")
-        header.pack(fill="x")
+        header = tk.Frame(content, bg="#0b1020")
+        header.pack(fill="x", pady=(0, 14))
 
-        label_wrap = ttk.Frame(header, style="Root.TFrame")
-        label_wrap.pack(side="left", fill="x", expand=True)
-
-        self.section_title = ttk.Label(label_wrap, style="Title.TLabel")
+        self.section_title = tk.Label(header, bg="#0b1020", fg="#e7eaff", font=("Segoe UI", 23, "bold"))
         self.section_title.pack(anchor="w")
 
-        self.section_description = ttk.Label(label_wrap, style="Subtitle.TLabel")
+        self.section_description = tk.Label(header, bg="#0b1020", fg="#a9b3d6", font=("Segoe UI", 11))
         self.section_description.pack(anchor="w", pady=(4, 0))
 
-        self.save_button = ttk.Button(header, text="Сохранить пресет", style="Primary.TButton", command=self.on_save)
-        self.save_button.pack(side="right", padx=(10, 0))
+        self.status_label = tk.Label(content, bg="#0b1020", fg="#86a2ff", font=("Segoe UI", 10, "bold"), text="")
+        self.status_label.pack(anchor="w", pady=(0, 8))
 
-        self.card_container = ttk.Frame(content, style="Root.TFrame")
-        self.card_container.pack(fill="both", expand=True, pady=(18, 0))
+        self.card_container = tk.Frame(content, bg="#0b1020")
+        self.card_container.pack(fill="both", expand=True)
 
-    def clear_cards(self) -> None:
-        if not self.card_container:
+    def set_status(self, text: str):
+        if self.status_label is None:
             return
-        for widget in self.card_container.winfo_children():
-            widget.destroy()
+        self.status_label.config(text=text)
+        self.root.after(2200, lambda: self.status_label and self.status_label.config(text=""))
 
-    def render_section(self, index: int) -> None:
-        self.current_section_index = index
-        section = SECTIONS[index]
-        self.section_title.configure(text=section["title"])
-        self.section_description.configure(text=section["description"])
+    def clear_cards(self):
+        if self.card_container:
+            for widget in self.card_container.winfo_children():
+                widget.destroy()
 
-        for i, btn in enumerate(self.menu_buttons):
-            btn.configure(style="MenuActive.TButton" if i == index else "Menu.TButton")
+    def render_section(self, section_index: int):
+        section = SECTIONS[section_index]
+        self.section_title.config(text=section["title"])
+        self.section_description.config(text=section["description"])
+
+        for idx, btn in enumerate(self.menu_buttons):
+            if idx == section_index:
+                btn.config(bg="#30447d")
+            else:
+                btn.config(bg="#1b2444")
 
         self.clear_cards()
-
         if not self.card_container:
             return
 
-        for row_index, (item_title, item_desc) in enumerate(section["items"]):
-            card = ttk.Frame(self.card_container, style="Card.TFrame", padding=12)
-            card.grid(row=row_index // 2, column=row_index % 2, padx=8, pady=8, sticky="nsew")
+        for idx, feature in enumerate(section["items"]):
+            card = tk.Frame(self.card_container, bg="#17213f", bd=0, highlightthickness=1, highlightbackground="#2a3358")
+            card.grid(row=idx // 2, column=idx % 2, padx=8, pady=8, sticky="nsew")
 
             self.card_container.grid_columnconfigure(0, weight=1)
             self.card_container.grid_columnconfigure(1, weight=1)
 
-            title_row = ttk.Frame(card, style="Card.TFrame")
-            title_row.pack(fill="x")
+            row = tk.Frame(card, bg="#17213f")
+            row.pack(fill="x", padx=14, pady=(14, 8))
 
-            ttk.Label(title_row, text=item_title, style="CardTitle.TLabel").pack(side="left", anchor="w")
+            text_col = tk.Frame(row, bg="#17213f")
+            text_col.pack(side="left", fill="both", expand=True)
 
-            enabled = tk.BooleanVar(value=row_index % 2 == 0)
-            ttk.Checkbutton(title_row, variable=enabled).pack(side="right")
+            tk.Label(text_col, text=feature.title, bg="#17213f", fg="#e7eaff", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            tk.Label(
+                text_col,
+                text=feature.description,
+                bg="#17213f",
+                fg="#a9b3d6",
+                font=("Segoe UI", 10),
+                justify="left",
+                wraplength=390,
+            ).pack(anchor="w", pady=(4, 0))
 
-            ttk.Label(card, text=item_desc, style="CardDesc.TLabel").pack(anchor="w", pady=(8, 10))
+            initial_state = self.initial_feature_state(feature.key)
 
-            ttk.Label(card, text="Уровень", style="CardDesc.TLabel").pack(anchor="w")
-            level = tk.IntVar(value=30 + row_index * 20)
-            ttk.Scale(card, from_=0, to=100, variable=level, style="Custom.Horizontal.TScale").pack(fill="x", pady=(5, 0))
+            toggle = AnimatedToggle(
+                row,
+                initial=initial_state,
+                bg="#17213f",
+                command=lambda state, key=feature.key: self.toggle_feature(key, state),
+            )
+            toggle.pack(side="right", padx=(10, 0), pady=2)
 
-    def on_save(self) -> None:
-        self.save_button.configure(text="Сохранено")
-        self.root.after(1300, lambda: self.save_button.configure(text="Сохранить пресет"))
+    def initial_feature_state(self, key: str) -> bool:
+        if key == "windows_notifications":
+            disabled = WindowsNotificationManager.is_disabled()
+            self.feature_states[key] = disabled
+            return disabled
+
+        return self.feature_states.get(key, False)
+
+    def toggle_feature(self, key: str, state: bool) -> bool:
+        if key == "windows_notifications":
+            if not WindowsNotificationManager.is_supported():
+                self.set_status("Функция проверки реестра доступна только на Windows.")
+                return False
+
+            success = WindowsNotificationManager.set_disabled(state)
+            if not success:
+                self.set_status("Не удалось изменить реестр для уведомлений.")
+                return False
+
+            final_state = WindowsNotificationManager.is_disabled()
+            self.feature_states[key] = final_state
+            self.set_status("Уведомления Windows отключены." if final_state else "Уведомления Windows включены.")
+            return final_state == state
+
+        self.feature_states[key] = state
+        self.set_status(f"{key}: {'ON' if state else 'OFF'}")
+        return True
 
 
-def main() -> None:
+def main():
     root = tk.Tk()
-    app = ControlCenterApp(root)
-    _ = app
+    ControlCenterApp(root)
     root.mainloop()
 
 
